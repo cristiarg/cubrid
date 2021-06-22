@@ -301,6 +301,7 @@ namespace cublog
   int
   log_rpl_calculate_replication_delay (THREAD_ENTRY *thread_p, time_msec_t a_start_time_msec)
   {
+    const static int replication_parallel = prm_get_integer_value (PRM_ID_REPLICATION_PARALLEL_COUNT);
     // skip calculation if bogus input (sometimes, it is -1);
     // TODO: fix bogus input at the source if at all possible (debugging revealed that
     // it happens for LOG_COMMIT messages only and there is no point at the source where the 'at_time'
@@ -315,7 +316,8 @@ namespace cublog
 
 	if (prm_get_bool_value (PRM_ID_ER_LOG_CALC_REPL_DELAY))
 	  {
-	    _er_log_debug (ARG_FILE_LINE, "[CALC_REPL_DELAY]: %9lld msec", time_diff_msec);
+	    _er_log_debug (ARG_FILE_LINE, "replication_parallel_count= %d  CALC_REPL_DELAY= %9lld msec"
+			   , replication_parallel, time_diff_msec);
 	  }
 
 	return NO_ERROR;
