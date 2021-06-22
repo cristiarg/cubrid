@@ -1933,6 +1933,16 @@ logpb_copy_page (THREAD_ENTRY * thread_p, LOG_PAGEID pageid, LOG_CS_ACCESS_MODE 
       rv = ER_FAILED;
       goto exit;
     }
+  // Optimize log page fetching:
+  if (log_bufptr->pageid < pageid && !LOG_ISRESTARTED ())
+    {
+      // cache new page
+      // invalidate previous page
+      log_bufptr->pageid = NULL_PAGEID;
+      std::memcpy (log_bufptr->logpage, log_pgptr, LOG_PAGESIZE);
+      log_bufptr->pageid = pageid;
+      log_bufptr->phy_pageid = logpb_to_physical_pageid (pageid);
+    }
 
   stat_page_found = PERF_PAGE_MODE_OLD_LOCK_WAIT;
 
