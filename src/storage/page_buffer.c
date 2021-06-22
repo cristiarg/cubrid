@@ -4919,6 +4919,10 @@ pgbuf_is_temporary_volume (VOLID volid)
     {
       return false;
     }
+  if (cubthread::get_entry ().type == TT_REPLICATION)
+    {
+      return false;
+    }
   return (LOG_DBFIRST_VOLID <= volid && xdisk_get_purpose (NULL, volid) == DB_TEMPORARY_DATA_PURPOSE);
 }
 
@@ -7715,7 +7719,10 @@ pgbuf_claim_bcb_for_fix (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_
 	}
 #endif /* ENABLE_SYSTEMTAP */
 
-      pgbuf_request_data_page_from_page_server (vpid);
+      if (pgbuf_is_temporary_volume (vpid->volid) == false)
+	{
+	  pgbuf_request_data_page_from_page_server (vpid);
+	}
 
       if (dwb_read_page (thread_p, vpid, &bufptr->iopage_buffer->iopage, &success) != NO_ERROR)
 	{
