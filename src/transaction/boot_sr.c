@@ -2408,6 +2408,14 @@ boot_restart_server (THREAD_ENTRY * thread_p, bool print_restart, const char *db
       goto error;
     }
 
+#if defined (SERVER_MODE)
+  if (get_server_type () == SERVER_TYPE_TRANSACTION)
+    {
+      // Data page broker is required before volumes are mounted.
+      ats_Gl.init_page_brokers ();
+    }
+#endif
+
   /*
    * Now continue the normal restart process. At this point the data volumes
    * are ok. However, some recovery may need to take place
@@ -2523,14 +2531,6 @@ boot_restart_server (THREAD_ENTRY * thread_p, bool print_restart, const char *db
    * Now restart the recovery manager and execute any recovery actions
    */
 
-#if defined (SERVER_MODE)
-  // transaction server _needs_ connection with page server
-  if (get_server_type () == SERVER_TYPE_TRANSACTION)
-    {
-      ats_Gl.init_log_page_broker ();
-    }
-#endif // SERVER_MODE
-
   log_initialize (thread_p, boot_Db_full_name, log_path, log_prefix, from_backup, r_args);
 
   error_code = boot_after_copydb (thread_p);	// only does something if this is first boot after copydb
@@ -2565,12 +2565,12 @@ boot_restart_server (THREAD_ENTRY * thread_p, bool print_restart, const char *db
     }
 
 #if defined (SERVER_MODE)
-  // TODO: not sure, but I think page server's initialization must come after log has been initialized
+  // page server-specific initialization needs log to be initialized
   if (get_server_type () == SERVER_TYPE_PAGE)
     {
       const log_lsa next_io_lsa = log_Gl.append.get_nxio_lsa ();
       ps_Gl.start_log_replicator (next_io_lsa);
-      ps_Gl.init_log_page_fetcher ();
+      ps_Gl.init_page_fetcher ();
     }
 #endif // SERVER_MODE
 
@@ -3189,11 +3189,11 @@ xboot_shutdown_server (REFPTR (THREAD_ENTRY, thread_p), ER_FINAL_CODE is_er_fina
     {
       log_Gl.finalize_log_prior_receiver ();	// stop receiving log before log_final()
       ps_Gl.finish_replication_during_shutdown (*thread_p);
-      ps_Gl.finalize_log_page_fetcher ();
+      ps_Gl.finalize_page_fetcher ();
     }
   else if (get_server_type () == SERVER_TYPE_TRANSACTION)
     {
-      ats_Gl.finalize_log_page_broker ();
+      ats_Gl.finalize_page_brokers ();
     }
 #endif
 
