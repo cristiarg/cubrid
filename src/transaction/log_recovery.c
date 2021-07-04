@@ -1010,6 +1010,12 @@ log_recovery_redo (THREAD_ENTRY * thread_p, log_recovery_context & context)
 #endif
   // *INDENT-ON*
 
+  // prompt after threads/tasks are started but before any work is done
+  fprintf (stdout, "START recovery_redo (any key)? ");
+  fflush (stdout);
+  (void) getc (stdin);
+  fprintf (stdout, "\n");
+
   /*
    * GO FORWARD, redoing records of all transactions including aborted ones.
    *
