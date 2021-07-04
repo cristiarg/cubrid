@@ -1657,8 +1657,8 @@ log_recovery_redo (THREAD_ENTRY * thread_p, log_recovery_context & context)
     const int log_recovery_redo_parallel_count = prm_get_integer_value (PRM_ID_RECOVERY_PARALLEL_COUNT);
     const auto time_end = std::chrono::system_clock::now ();
     const auto time_dur_ms = std::chrono::duration_cast < std::chrono::milliseconds > (time_end - time_start);
-    er_log_debug (ARG_FILE_LINE, "recovery_parallel_count= %d  duration= %lld ms", log_recovery_redo_parallel_count,
-		  (long long) time_dur_ms.count ());
+    er_log_debug (ARG_FILE_LINE, "recovery_parallel_count= %2d  duration= %6lld ms\n",
+		  log_recovery_redo_parallel_count, (long long) time_dur_ms.count ());
   }
 #endif
 
