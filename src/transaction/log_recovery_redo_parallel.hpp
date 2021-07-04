@@ -158,6 +158,7 @@ namespace cublog
       {
 	  using ux_redo_job_base = std::unique_ptr<redo_job_base>;
 	  using ux_redo_job_deque = std::deque<ux_redo_job_base>;
+	  //using vpid_ux_redo_job_deque_map_t = std::map<vpid,
 	  using vpid_set = std::set<VPID>;
 	  using log_lsa_set = std::set<log_lsa>;
 
@@ -187,9 +188,10 @@ namespace cublog
 	   * flag set to true signals to the callers that no more data is expected
 	   * and, therefore, they can also terminate
 	   */
-	  ux_redo_job_base pop_job (bool &adding_finished);
+	  ux_redo_job_deque pop_job (bool &adding_finished);
 
 	  void notify_job_finished (const ux_redo_job_base &a_job);
+	  void notify_job_deque_finished (const ux_redo_job_deque &a_job_deque);
 
 	  /* wait until all data has been consumed internally; blocking call
 	   */
@@ -216,7 +218,7 @@ namespace cublog
 	   * NOTE: '*_locked_*' functions are supposed to be called from within locked
 	   * areas with respect to the resources they make use of
 	   */
-	  ux_redo_job_base do_locked_find_job_to_consume_and_mark_in_progress (
+	  ux_redo_job_deque do_locked_find_job_to_consume_and_mark_in_progress (
 		  const std::lock_guard<std::mutex> &a_consume_lockg,
 		  const std::lock_guard<std::mutex> &a_in_progress_lockg);
 
@@ -226,6 +228,9 @@ namespace cublog
 	  void do_locked_mark_job_in_progress (
 		  const std::lock_guard<std::mutex> &a_in_progress_lockg,
 		  const ux_redo_job_base &a_job);
+	  void do_locked_mark_job_deque_in_progress (
+		  const std::lock_guard<std::mutex> &a_in_progress_lockg,
+		  const ux_redo_job_deque &a_job_deque);
 
 	private:
 	  /* two queues are internally managed and take turns at being either

@@ -198,7 +198,7 @@ namespace cublog
     return m_adding_finished.load ();
   }
 
-  redo_parallel::redo_job_queue::ux_redo_job_base
+  redo_parallel::redo_job_queue::ux_redo_job_deque
   redo_parallel::redo_job_queue::pop_job (bool &out_adding_finished)
   {
     std::lock_guard<std::mutex> consume_lockg (m_consume_queue_mutex);
@@ -225,7 +225,7 @@ namespace cublog
 	// entry is found
 
 	std::lock_guard<std::mutex> in_progress_lockg (m_in_progress_mutex);
-	ux_redo_job_base job_to_consume =
+	ux_redo_job_deque jobs_to_consume =
 		do_locked_find_job_to_consume_and_mark_in_progress (consume_lockg, in_progress_lockg);
 
 	// specifically leave the 'out_adding_finished' on false as set at the beginning:
@@ -235,7 +235,7 @@ namespace cublog
 	//    tasks have finished executing
 
 	// job is null at this point, task will have to spin-wait and come again
-	return job_to_consume;
+	return jobs_to_consume;
       }
     else
       {
@@ -249,7 +249,7 @@ namespace cublog
 	// if no more data will be produced (signalled by the flag), the
 	// consumer will just need to terminate; otherwise, consumer is expected to
 	// spin-wait and try again
-	return nullptr;
+	return ux_redo_job_deque ();
       }
   }
 
@@ -288,20 +288,42 @@ namespace cublog
       }
   }
 
-  redo_parallel::redo_job_queue::ux_redo_job_base
+  redo_parallel::redo_job_queue::ux_redo_job_deque
   redo_parallel::redo_job_queue::do_locked_find_job_to_consume_and_mark_in_progress (
 	  const std::lock_guard<std::mutex> &a_consume_lockg, const std::lock_guard<std::mutex> &a_in_progress_lockg)
   {
+//#define TODO_LOG_ITERATIONS
     ux_redo_job_deque::iterator consume_queue_it = m_consume_queue->begin ();
+#ifdef TODO_LOG_ITERATIONS
+    int iterations = 0;
+#endif
     for (; consume_queue_it != m_consume_queue->end (); ++consume_queue_it)
       {
+#ifdef TODO_LOG_ITERATIONS
+	++iterations;
+#endif
+	// skip all entries processed by other tasks
 	const vpid it_vpid = (*consume_queue_it)->get_vpid ();
 	if (m_in_progress_vpids.find ((it_vpid)) == m_in_progress_vpids.cend ())
 	  {
-	    ux_redo_job_base job = std::move (*consume_queue_it);
-	    m_consume_queue->erase (consume_queue_it);
+	    // consume all contiguous jobs with the same vpid
+	    redo_parallel::redo_job_queue::ux_redo_job_deque ret_job_deq;
+	    ux_redo_job_deque::iterator consume_queue_it_end = consume_queue_it;
+	    while (consume_queue_it_end != m_consume_queue->end ()
+		   && (*consume_queue_it_end)->get_vpid () == it_vpid)
+	      {
+		ret_job_deq.push_back (std::move (*consume_queue_it_end));
+		++consume_queue_it_end;
+	      }
+	    m_consume_queue->erase (consume_queue_it, consume_queue_it_end);
 
-	    do_locked_mark_job_in_progress (a_in_progress_lockg, job);
+	    do_locked_mark_job_deque_in_progress (a_in_progress_lockg, ret_job_deq);
+
+#ifdef TODO_LOG_ITERATIONS
+	    er_log_debug (ARG_FILE_LINE,
+			  "mcq=%8d  mipv= %2d  it= %4d  rds= %3d  retjob\n",
+			  m_consume_queue->size (), m_in_progress_vpids.size (), iterations, ret_job_deq.size ());
+#endif
 
 	    const log_lsa consume_minimum_log_lsa =
 		    m_consume_queue->empty () ? MAX_LSA : (* m_consume_queue->begin ())->get_log_lsa ();
@@ -318,12 +340,17 @@ namespace cublog
 	    m_minimum_log_lsa.set_for_consume_and_in_progress (
 		    consume_minimum_log_lsa, *m_in_progress_lsas.cbegin ());
 
-	    return job;
+	    return ret_job_deq;
 	  }
       }
 
+#ifdef TODO_LOG_ITERATIONS
+    er_log_debug (ARG_FILE_LINE, "mcq=%8d  mipv= %2d  it= %4d  retnul\n",
+		  m_consume_queue->size (), m_in_progress_vpids.size (), iterations);
+#endif
     // consumer task will have to spin-wait
-    return nullptr;
+    return ux_redo_job_deque ();
+#undef TODO_LOG_ITERATIONS
   }
 
   void
@@ -340,6 +367,25 @@ namespace cublog
     const log_lsa &job_log_lsa = a_job->get_log_lsa ();
     assert (m_in_progress_lsas.find (job_log_lsa) == m_in_progress_lsas.cend ());
     m_in_progress_lsas.insert (job_log_lsa);
+  }
+
+  void
+  redo_parallel::redo_job_queue::do_locked_mark_job_deque_in_progress (
+	  const std::lock_guard<std::mutex> &a_in_progress_lockg,
+	  const ux_redo_job_deque &a_job_deque)
+  {
+    // all jobs have the same vpid
+    const vpid &first_job_vpid = (*a_job_deque.cbegin ())->get_vpid ();
+    assert (m_in_progress_vpids.find (first_job_vpid) == m_in_progress_vpids.cend ());
+    m_in_progress_vpids.insert (first_job_vpid);
+
+    // each job has a different log_lsa
+    for (const auto &job : a_job_deque)
+      {
+	const log_lsa &job_log_lsa = job->get_log_lsa ();
+	assert (m_in_progress_lsas.find (job_log_lsa) == m_in_progress_lsas.cend ());
+	m_in_progress_lsas.insert (job_log_lsa);
+      }
   }
 
   void
@@ -368,6 +414,48 @@ namespace cublog
       assert (m_in_progress_vpids.size () == m_in_progress_lsas.size ());
     }
     if (set_empty)
+      {
+	m_in_progress_vpids_empty_cv.notify_one ();
+      }
+  }
+
+  void
+  redo_parallel::redo_job_queue::notify_job_deque_finished (const ux_redo_job_deque &a_job_deque)
+  {
+    bool vpid_set_empty = false;
+    bool lsa_set_empty = false;
+    {
+      std::lock_guard<std::mutex> in_progress_lockg (m_in_progress_mutex);
+
+      // all jobs have the same vpid
+      const auto &first_job_vpid = (*a_job_deque.cbegin ())->get_vpid ();
+      const auto vpid_it = m_in_progress_vpids.find (first_job_vpid);
+      assert (vpid_it != m_in_progress_vpids.cend ());
+      m_in_progress_vpids.erase (vpid_it);
+      vpid_set_empty = m_in_progress_vpids.empty ();
+
+      // each job has a different log_lsa
+      for (const auto &job : a_job_deque)
+	{
+	  const log_lsa &job_log_lsa = job->get_log_lsa ();
+	  const auto log_lsa_it = m_in_progress_lsas.find (job_log_lsa);
+	  assert (log_lsa_it != m_in_progress_lsas.cend ());
+	  m_in_progress_lsas.erase (log_lsa_it);
+	}
+      lsa_set_empty = m_in_progress_lsas.empty ();
+
+      const log_lsa in_progress_minimum_log_lsa = m_in_progress_lsas.empty ()
+	  ? MAX_LSA
+	  : *m_in_progress_lsas.cbegin ();
+      m_minimum_log_lsa.set_for_in_progress (in_progress_minimum_log_lsa);
+    }
+    if ((vpid_set_empty && !lsa_set_empty) || (!vpid_set_empty && lsa_set_empty))
+      {
+	assert (false);
+      }
+    assert ((vpid_set_empty && lsa_set_empty) || (!vpid_set_empty && !lsa_set_empty));
+
+    if (vpid_set_empty && lsa_set_empty)
       {
 	m_in_progress_vpids_empty_cv.notify_one ();
       }
@@ -419,6 +507,7 @@ namespace cublog
   {
     assert (m_produce_queue->size () == 0);
     assert (m_consume_queue->size () == 0);
+    assert (m_in_progress_vpids.size () == 0);
     assert (m_in_progress_vpids.size () == 0);
   }
 
@@ -531,15 +620,15 @@ namespace cublog
     for (; !finished ;)
       {
 	bool adding_finished = false;
-	std::unique_ptr<redo_job_base> job = m_queue.pop_job (adding_finished);
+	std::deque<std::unique_ptr<redo_job_base>> job_deque = m_queue.pop_job (adding_finished);
 
-	if (job == nullptr && adding_finished)
+	if (job_deque.empty () && adding_finished)
 	  {
 	    finished = true;
 	  }
 	else
 	  {
-	    if (job == nullptr)
+	    if (job_deque.empty ())
 	      {
 		// TODO: if needed, check if requested to finish ourselves
 
@@ -549,9 +638,12 @@ namespace cublog
 	    else
 	      {
 		THREAD_ENTRY *const thread_entry = &context;
-		job->execute (thread_entry, m_log_pgptr_reader, m_undo_unzip_support, m_redo_unzip_support);
+		for (auto &job : job_deque)
+		  {
+		    job->execute (thread_entry, m_log_pgptr_reader, m_undo_unzip_support, m_redo_unzip_support);
+		  }
 
-		m_queue.notify_job_finished (job);
+		m_queue.notify_job_deque_finished (job_deque);
 	      }
 	  }
       }
