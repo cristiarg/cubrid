@@ -986,8 +986,6 @@ log_recovery_redo (THREAD_ENTRY * thread_p, log_recovery_context & context)
   bool is_mvcc_op = false;
   const bool force_each_log_page_fetch = false;
 
-  const auto time_start = std::chrono::system_clock::now ();
-
   /* depending on compilation mode and on a system parameter, initialize the
    * infrastructure for parallel log recovery;
    * if infrastructure is not initialized dependent code below works sequentially
@@ -1015,6 +1013,7 @@ log_recovery_redo (THREAD_ENTRY * thread_p, log_recovery_context & context)
   fflush (stdout);
   (void) getc (stdin);
   fprintf (stdout, "\n");
+  const auto time_start = std::chrono::system_clock::now ();
 
   /*
    * GO FORWARD, redoing records of all transactions including aborted ones.
