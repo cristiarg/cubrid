@@ -158,7 +158,7 @@ namespace cublog
       {
 	  using ux_redo_job_base = std::unique_ptr<redo_job_base>;
 	  using ux_redo_job_deque = std::deque<ux_redo_job_base>;
-	  //using vpid_ux_redo_job_deque_map_t = std::map<vpid,
+	  using vpid_ux_redo_job_deque_map_t = std::map<vpid, ux_redo_job_deque>;
 	  using vpid_set = std::set<VPID>;
 	  using log_lsa_set = std::set<log_lsa>;
 
@@ -236,10 +236,13 @@ namespace cublog
 	  /* two queues are internally managed and take turns at being either
 	   * on the producing or on the consumption side
 	   */
-	  ux_redo_job_deque *m_produce_queue;
-	  mutable std::mutex m_produce_queue_mutex;
-	  ux_redo_job_deque *m_consume_queue;
-	  std::mutex m_consume_queue_mutex;
+	  vpid_ux_redo_job_deque_map_t *m_produce;
+//	  log_lsa_set m_produce_min_lsa_set;
+	  mutable std::mutex m_produce_mutex;
+
+	  vpid_ux_redo_job_deque_map_t *m_consume;
+//	  log_lsa_set m_consume_min_lsa_set;
+	  std::mutex m_consume_mutex;
 
 	  bool m_queues_empty;
 	  mutable std::condition_variable m_queues_empty_cv;

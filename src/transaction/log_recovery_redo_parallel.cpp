@@ -155,8 +155,8 @@ namespace cublog
    *********************************************************************/
 
   redo_parallel::redo_job_queue::redo_job_queue (minimum_log_lsa_monitor &a_minimum_log_lsa)
-    : m_produce_queue (new ux_redo_job_deque ())
-    , m_consume_queue (new ux_redo_job_deque ())
+    : m_produce (new vpid_ux_redo_job_deque_map_t ())
+    , m_consume (new vpid_ux_redo_job_deque_map_t ())
     , m_queues_empty (true)
     , m_adding_finished { false }
     , m_minimum_log_lsa { a_minimum_log_lsa }
@@ -167,22 +167,24 @@ namespace cublog
   {
     assert_idle ();
 
-    delete m_produce_queue;
-    m_produce_queue = nullptr;
+    delete m_produce;
+    m_produce = nullptr;
 
-    delete m_consume_queue;
-    m_consume_queue = nullptr;
+    delete m_consume;
+    m_consume = nullptr;
   }
 
   void
   redo_parallel::redo_job_queue::push_job (ux_redo_job_base &&job)
   {
-    std::lock_guard<std::mutex> lockg (m_produce_queue_mutex);
-    if (m_produce_queue->empty ())
+    std::lock_guard<std::mutex> lockg (m_produce_mutex);
+    const vpid job_vpid = job->get_vpid ();
+    // always push back, this maintains log_lsa strictly increasing order
+    if (m_produce->empty ())
       {
 	m_minimum_log_lsa.set_for_produce (job->get_log_lsa ());
       }
-    m_produce_queue->push_back (std::move (job));
+    (*m_produce)[job_vpid].push_back (std::move (job));
     m_queues_empty = false;
   }
 
@@ -201,13 +203,13 @@ namespace cublog
   redo_parallel::redo_job_queue::ux_redo_job_deque
   redo_parallel::redo_job_queue::pop_job (bool &out_adding_finished)
   {
-    std::lock_guard<std::mutex> consume_lockg (m_consume_queue_mutex);
+    std::lock_guard<std::mutex> consume_lockg (m_consume_mutex);
 
     out_adding_finished = false;
 
     do_swap_queues_if_needed (consume_lockg);
 
-    if (m_consume_queue->size () > 0)
+    if (m_consume->size () > 0)
       {
 	// IDEA: instead of every task sifting through entries locked in execution by other tasks,
 	// promote those entries as they are found to separate queues on a per-VPID basis; thus,
@@ -257,7 +259,7 @@ namespace cublog
   redo_parallel::redo_job_queue::do_swap_queues_if_needed (const std::lock_guard<std::mutex> &a_consume_lockg)
   {
     // if consumption of everything in consume queue finished; see whether there's some more in the other one
-    if (m_consume_queue->size () == 0)
+    if (m_consume->size () == 0)
       {
 	// TODO: a second barrier such that, consumption threads do not 'busy wait' by
 	// constantly swapping two empty containers; works in combination with a notification
@@ -268,18 +270,19 @@ namespace cublog
 	bool notify_queues_empty = false;
 	{
 	  // effectively, an 'atomic' swap because both queues are locked
-	  std::lock_guard<std::mutex> produce_lockg (m_produce_queue_mutex);
-	  std::swap (m_produce_queue, m_consume_queue);
+	  std::lock_guard<std::mutex> produce_lockg (m_produce_mutex);
+	  std::swap (m_produce, m_consume);
 	  // if both queues empty, notify the, possibly waiting, producing thread
-	  m_queues_empty = m_produce_queue->empty () && m_consume_queue->empty ();
+	  m_queues_empty = m_produce->empty () && m_consume->empty ();
 	  notify_queues_empty = m_queues_empty;
 
 	  // lsa's are ever incresing
-	  const log_lsa produce_minimum_log_lsa =
-		  m_produce_queue->empty () ? MAX_LSA : (*m_produce_queue->begin ())->get_log_lsa ();
-	  const log_lsa consume_minimum_log_lsa =
-		  m_consume_queue->empty () ? MAX_LSA : (* m_consume_queue->begin ())->get_log_lsa ();
-	  m_minimum_log_lsa.set_for_produce_and_consume (produce_minimum_log_lsa, consume_minimum_log_lsa);
+	  // TODO: update minimum lsa
+//	  const log_lsa produce_minimum_log_lsa =
+//		  m_produce->empty () ? MAX_LSA : (*m_produce->begin ())->get_log_lsa ();
+//	  const log_lsa consume_minimum_log_lsa =
+//		  m_consume->empty () ? MAX_LSA : (* m_consume->begin ())->get_log_lsa ();
+//	  m_minimum_log_lsa.set_for_produce_and_consume (produce_minimum_log_lsa, consume_minimum_log_lsa);
 	}
 	if (notify_queues_empty)
 	  {
@@ -293,29 +296,21 @@ namespace cublog
 	  const std::lock_guard<std::mutex> &a_consume_lockg, const std::lock_guard<std::mutex> &a_in_progress_lockg)
   {
 //#define TODO_LOG_ITERATIONS
-    ux_redo_job_deque::iterator consume_queue_it = m_consume_queue->begin ();
+    vpid_ux_redo_job_deque_map_t::iterator consume_it = m_consume->begin ();
 #ifdef TODO_LOG_ITERATIONS
     int iterations = 0;
 #endif
-    for (; consume_queue_it != m_consume_queue->end (); ++consume_queue_it)
+    for (; consume_it != m_consume->end (); ++consume_it)
       {
 #ifdef TODO_LOG_ITERATIONS
 	++iterations;
 #endif
 	// skip all entries processed by other tasks
-	const vpid it_vpid = (*consume_queue_it)->get_vpid ();
+	const vpid &it_vpid = consume_it->first;
 	if (m_in_progress_vpids.find ((it_vpid)) == m_in_progress_vpids.cend ())
 	  {
-	    // consume all contiguous jobs with the same vpid
-	    redo_parallel::redo_job_queue::ux_redo_job_deque ret_job_deq;
-	    ux_redo_job_deque::iterator consume_queue_it_end = consume_queue_it;
-	    while (consume_queue_it_end != m_consume_queue->end ()
-		   && (*consume_queue_it_end)->get_vpid () == it_vpid)
-	      {
-		ret_job_deq.push_back (std::move (*consume_queue_it_end));
-		++consume_queue_it_end;
-	      }
-	    m_consume_queue->erase (consume_queue_it, consume_queue_it_end);
+            ux_redo_job_deque ret_job_deq = std::move (consume_it->second);
+            m_consume->erase (consume_it);
 
 	    do_locked_mark_job_deque_in_progress (a_in_progress_lockg, ret_job_deq);
 
@@ -325,20 +320,21 @@ namespace cublog
 			  m_consume_queue->size (), m_in_progress_vpids.size (), iterations, ret_job_deq.size ());
 #endif
 
-	    const log_lsa consume_minimum_log_lsa =
-		    m_consume_queue->empty () ? MAX_LSA : (* m_consume_queue->begin ())->get_log_lsa ();
-	    // mark transition in one go for consistency
-	    // if:
-	    //  - first the consume is being changed (or even cleared)
-	    //  - then, separately, the in-progress is updated
-	    // the following might happen:
-	    //  - suppose that there is only one job left in the consume queue, everything else is empty
-	    //  - the minimum value for the consume queue would be cleared
-	    //  - at this point, the minimum log lsa will actually be MAX_LSA
-	    //  - while there is actually one more job (that has just been taken out of the consume queue
-	    //    and is to be transferred to the in progress set)
-	    m_minimum_log_lsa.set_for_consume_and_in_progress (
-		    consume_minimum_log_lsa, *m_in_progress_lsas.cbegin ());
+          // TODO: update minimum lsa
+//	    const log_lsa consume_minimum_log_lsa =
+//		    m_consume->empty () ? MAX_LSA : (* m_consume->begin ())->get_log_lsa ();
+//	    // mark transition in one go for consistency
+//	    // if:
+//	    //  - first the consume is being changed (or even cleared)
+//	    //  - then, separately, the in-progress is updated
+//	    // the following might happen:
+//	    //  - suppose that there is only one job left in the consume queue, everything else is empty
+//	    //  - the minimum value for the consume queue would be cleared
+//	    //  - at this point, the minimum log lsa will actually be MAX_LSA
+//	    //  - while there is actually one more job (that has just been taken out of the consume queue
+//	    //    and is to be transferred to the in progress set)
+//	    m_minimum_log_lsa.set_for_consume_and_in_progress (
+//		    consume_minimum_log_lsa, *m_in_progress_lsas.cbegin ());
 
 	    return ret_job_deq;
 	  }
@@ -466,7 +462,7 @@ namespace cublog
   {
     {
       // only locking the produce mutex because the value is only 'produced' under that lock
-      std::unique_lock<std::mutex> empty_queues_lock (m_produce_queue_mutex);
+      std::unique_lock<std::mutex> empty_queues_lock (m_produce_mutex);
       m_queues_empty_cv.wait (empty_queues_lock, [this] ()
       {
 	return m_queues_empty;
@@ -492,7 +488,7 @@ namespace cublog
     bool in_progress_vpids_empty = false;
     {
       // only locking the produce mutex because the value is only 'produced' under that lock
-      std::lock_guard<std::mutex> empty_queues_lock (m_produce_queue_mutex);
+      std::lock_guard<std::mutex> empty_queues_lock (m_produce_mutex);
       queues_empty = m_queues_empty;
     }
     {
@@ -505,8 +501,10 @@ namespace cublog
   void
   redo_parallel::redo_job_queue::assert_idle () const
   {
-    assert (m_produce_queue->size () == 0);
-    assert (m_consume_queue->size () == 0);
+    assert (m_produce->size () == 0);
+//    assert (m_produce_min_lsa_set.size () == 0);
+    assert (m_consume->size () == 0);
+//    assert (m_consume_min_lsa_set.size () == 0);
     assert (m_in_progress_vpids.size () == 0);
     assert (m_in_progress_vpids.size () == 0);
   }
