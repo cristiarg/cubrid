@@ -1984,7 +1984,7 @@ try_again:
 
   /* Set Page identifier if needed */
   // Redo recovery may find an immature page which should be set.
-  force_set_vpid = (fetch_mode == NEW_PAGE && log_is_in_crash_recovery_and_not_yet_completes_redo ());
+  force_set_vpid = (fetch_mode == RECOVERY_PAGE) && log_is_in_crash_recovery_and_not_yet_completes_redo ();
   pgbuf_set_bcb_page_vpid (bufptr, force_set_vpid);
 
   maybe_deallocated = (fetch_mode == OLD_PAGE_MAYBE_DEALLOCATED);
@@ -2117,6 +2117,7 @@ try_again:
 	case NEW_PAGE:
 	case OLD_PAGE_DEALLOCATED:
 	case OLD_PAGE_IF_IN_BUFFER:
+	case RECOVERY_PAGE:
 	  /* fixing deallocated page is expected. fall through to return it. */
 	  break;
 	case OLD_PAGE:
