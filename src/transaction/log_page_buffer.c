@@ -754,14 +754,16 @@ logpb_invalidate_pool (THREAD_ENTRY * thread_p)
 
   /*
    * Flush any append dirty buffers at this moment.
-   * Then, invalidate any buffer that it is not fixed and dirty
    */
   logpb_flush_pages_direct (thread_p);
 
+  /*
+   * Invalidate all buffers.
+   */
   for (i = 0; i < log_Pb.num_buffers; i++)
     {
       log_bufptr = LOGPB_FIND_BUFPTR (i);
-      if (log_bufptr->pageid != NULL_PAGEID && !log_bufptr->dirty == false)
+      if (log_bufptr->pageid != NULL_PAGEID)
 	{
 	  logpb_initialize_log_buffer (log_bufptr, log_bufptr->logpage);
 	}
@@ -1632,6 +1634,10 @@ logpb_fetch_header_from_file_or_page_server (THREAD_ENTRY * thread_p, const char
   if (is_tran_server_with_remote_storage ())
     {
       res_code = logpb_fetch_header_from_page_server (hdr, log_pgptr);
+      if (res_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	}
     }
   else
     {
@@ -1643,7 +1649,6 @@ logpb_fetch_header_from_file_or_page_server (THREAD_ENTRY * thread_p, const char
 
   if (res_code != NO_ERROR)
     {
-      ASSERT_ERROR ();
       return res_code;
     }
 
@@ -2031,6 +2036,7 @@ logpb_copy_page (THREAD_ENTRY * thread_p, LOG_PAGEID pageid, LOG_CS_ACCESS_MODE 
     }
 
   // Optimize log page fetching by caching
+  // for now, only used to optimize recovery phase
   if (log_bufptr->pageid < pageid && !LOG_ISRESTARTED ())
     {
       // invalidate previous page
