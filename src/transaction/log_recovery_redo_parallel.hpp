@@ -25,6 +25,7 @@
 #if defined(SERVER_MODE)
 #include "thread_manager.hpp"
 #include "thread_worker_pool.hpp"
+#include "vpid_utilities.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -158,7 +159,7 @@ namespace cublog
       {
 	  using ux_redo_job_base = std::unique_ptr<redo_job_base>;
 	  using ux_redo_job_deque = std::deque<ux_redo_job_base>;
-	  using vpid_ux_redo_job_deque_map_t = std::map<vpid, ux_redo_job_deque>;
+	  using vpid_ux_redo_job_deque_map_t = std::unordered_map<vpid, ux_redo_job_deque, std::hash<VPID>>;
 	  using vpid_set = std::set<VPID>;
 	  using log_lsa_set = std::set<log_lsa>;
 

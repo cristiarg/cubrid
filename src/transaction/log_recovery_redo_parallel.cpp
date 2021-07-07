@@ -309,8 +309,8 @@ namespace cublog
 	const vpid &it_vpid = consume_it->first;
 	if (m_in_progress_vpids.find ((it_vpid)) == m_in_progress_vpids.cend ())
 	  {
-            ux_redo_job_deque ret_job_deq = std::move (consume_it->second);
-            m_consume->erase (consume_it);
+	    ux_redo_job_deque ret_job_deq = std::move (consume_it->second);
+	    m_consume->erase (consume_it);
 
 	    do_locked_mark_job_deque_in_progress (a_in_progress_lockg, ret_job_deq);
 
@@ -320,7 +320,7 @@ namespace cublog
 			  m_consume_queue->size (), m_in_progress_vpids.size (), iterations, ret_job_deq.size ());
 #endif
 
-          // TODO: update minimum lsa
+	    // TODO: update minimum lsa
 //	    const log_lsa consume_minimum_log_lsa =
 //		    m_consume->empty () ? MAX_LSA : (* m_consume->begin ())->get_log_lsa ();
 //	    // mark transition in one go for consistency
